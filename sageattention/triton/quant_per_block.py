@@ -21,6 +21,25 @@ import triton.language as tl
 from ..autotune_utils import _autotune_seq_len_bucket
 
 
+@triton.jit
+def _round_to_int8(x):
+    x_int32 = tl.inline_asm_elementwise(
+        "cvt.rni.s32.f32 $0, $1;",
+        "=r,f",
+        [x],
+        dtype=tl.int32,
+        is_pure=True,
+        pack=1,
+    )
+    return x_int32.to(tl.int8)
+
+
+@triton.jit
+def _quantize_tile_to_int8(x):
+    scale = tl.max(tl.abs(x)) / 127.5 + 1e-7
+    return _round_to_int8(x / scale), scale
+
+
 @triton.autotune(
     configs=[
         triton.Config({}, num_warps=4),
@@ -62,32 +81,30 @@ def quant_per_block_int8_kernel(
     output_ptrs = Output + off_b * stride_oz + off_h * stride_oh + offs_n[:, None] * stride_on + offs_k[None, :]
     scale_ptrs = Scale + off_b * stride_sz + off_h * stride_sh + off_blk
 
-    x = tl.load(input_ptrs, mask=offs_n[:, None] < L)
-    x = x.to(tl.float32)
+    mask = offs_n[:, None] < L
+    x = tl.load(input_ptrs, mask=mask, other=0.0).to(tl.float32)
 
     if HAS_MEAN:
         mean_ptrs = Mean + off_b * stride_mz + off_h * stride_mh + offs_k * stride_mk
         mean = tl.load(mean_ptrs).to(tl.float32)
-        x -= mean[None, :]
+        x = tl.where(mask, x - mean[None, :], 0.0)
 
-    scale = tl.max(tl.abs(x)) / 127.0
-    x_int8 = x / scale
-    x_int8 += 0.5 * tl.where(x_int8 >= 0, 1, -1)
-    x_int8 = x_int8.to(tl.int8)
-    tl.store(output_ptrs, x_int8, mask=offs_n[:, None] < L)
+    x_int8, scale = _quantize_tile_to_int8(x)
+
+    tl.store(output_ptrs, x_int8, mask=mask)
     tl.store(scale_ptrs, scale)
 
 
 def per_block_int8(
     q: torch.Tensor,
     k: torch.Tensor,
-    km: torch.Tensor | None = None,
-    BLKQ: int = 128,
-    BLKK: int = 64,
-    tensor_layout: str = "HND",
+    km: torch.Tensor | None,
+    BLKQ: int,
+    BLKK: int,
+    tensor_layout: str,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    q_int8 = torch.empty(q.shape, dtype=torch.int8, device=q.device)
-    k_int8 = torch.empty(k.shape, dtype=torch.int8, device=k.device)
+    q_int8 = torch.empty(q.shape, device=q.device, dtype=torch.int8)
+    k_int8 = torch.empty(k.shape, device=k.device, dtype=torch.int8)
 
     if tensor_layout == "HND":
         b, h_qo, qo_len, head_dim = q.shape

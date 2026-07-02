@@ -186,7 +186,7 @@ def _sageattn_configured(
         tensor_layout=tensor_layout,
     )
 
-    output = torch.empty(q.size(), dtype=dtype, device=q.device)
+    output = torch.empty(q.size(), device=q.device, dtype=dtype)
 
     if pv_accum_dtype == "fp32":
         lse = _qattn_sm80.qk_int8_sv_f16_accum_f32_attn(

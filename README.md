@@ -16,7 +16,7 @@ PyTorch >= 2.12 is required for the latest fixes with `torch.compile`.
 
 ## Usage
 
-The APIs `sageattn_qk_int8_pv_fp16_cuda` and `sageattn_qk_int8_pv_fp16_triton` are provided. `sageattn` is aliased to CUDA by default, and Triton if the env var `SAGEATTN_TRITON_BACKEND=1`.
+The APIs `sageattn_qk_int8_pv_fp16_cuda` and `sageattn_qk_int8_pv_fp16_triton` are provided. `sageattn` is aliased to CUDA by default, and Triton if the env var `SAGEATTN_BACKEND=triton`.
 
 The official SageAttention's Triton kernel behave like `pv_accum_dtype="fp16"`. I've added `pv_accum_dtype="fp32"` to the Triton kernel. `pv_accum_dtype="fp16+fp32"` is still not supported in the Triton kernel.
 

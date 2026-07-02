@@ -2,10 +2,10 @@ from itertools import product
 
 import pytest
 import torch
-from test_sageattn import _error_report, _expected, _make_qkv
+from test_sageattn import _error_report, _expected, _make_qkv, _mode_id
 
 from sageattention.triton_attn import _sageattn_triton_configured
-from sageattention.triton_autotune import _valid_triton_block_configs
+from sageattention.triton_autotune import _TRITON_BLOCK_CONFIGS, _valid_configs
 
 _MODES = tuple(
     product(
@@ -19,19 +19,19 @@ _MODES = tuple(
 )
 
 
-def _valid_block_configs() -> tuple[tuple[int, int], ...]:
+def _valid_cases():
     device_index = torch.cuda.current_device()
-    block_configs = []
-    for head_dim, _, _, is_causal, _, _ in _MODES:
-        for block_config in _valid_triton_block_configs(head_dim, is_causal, device_index):
-            if block_config not in block_configs:
-                block_configs.append(block_config)
-    return tuple(block_configs)
+    cases = []
+    for block_config in _TRITON_BLOCK_CONFIGS:
+        for mode in _MODES:
+            head_dim, _, _, is_causal, _, _ = mode
+            if block_config in _valid_configs(head_dim, is_causal, device_index):
+                cases.append(pytest.param(block_config, mode, id=f"block={block_config}-{_mode_id(mode)}"))
+    return tuple(cases)
 
 
 def _run_case(
     block_config: tuple[int, int],
-    *,
     head_dim: int,
     dtype: torch.dtype,
     tensor_layout: str,
@@ -57,37 +57,10 @@ def _run_case(
     return _error_report(actual, expected)
 
 
-@pytest.mark.parametrize("block_config", _valid_block_configs(), ids=str)
-def test_sageattn_triton_block_config(block_config: tuple[int, int]) -> None:
-    config_errors = []
-    config_tested = 0
-    device_index = torch.cuda.current_device()
-
-    for head_dim, dtype, tensor_layout, is_causal, pv_accum_dtype, smooth_k in _MODES:
-        if block_config not in _valid_triton_block_configs(head_dim, is_causal, device_index):
-            continue
-
-        config_tested += 1
-        name = (
-            f"head_dim={head_dim} dtype={dtype} layout={tensor_layout} is_causal={is_causal} "
-            f"pv_accum_dtype={pv_accum_dtype} smooth_k={smooth_k}"
-        )
-        try:
-            passed, msg = _run_case(
-                block_config,
-                head_dim=head_dim,
-                dtype=dtype,
-                tensor_layout=tensor_layout,
-                is_causal=is_causal,
-                pv_accum_dtype=pv_accum_dtype,
-                smooth_k=smooth_k,
-            )
-        except Exception as e:
-            passed = False
-            msg = f"error={e}"
-
-        if not passed:
-            config_errors.append(f"{name}: {msg}")
-
-    assert config_tested > 0
-    assert not config_errors, "\n".join(config_errors)
+@pytest.mark.parametrize(("block_config", "mode"), _valid_cases())
+def test_sageattn_triton_block_config(
+    block_config: tuple[int, int],
+    mode: tuple[int, torch.dtype, str, bool, str, bool],
+) -> None:
+    passed, msg = _run_case(block_config, *mode)
+    assert passed, msg

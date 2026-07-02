@@ -9,7 +9,7 @@ def test_eager_autotuned() -> None:
     q, k, v = _make_qkv()
     expected = _expected(q, k, v, "HND", False)
     actual = sageattn_qk_int8_pv_fp16_triton(q, k, v, tensor_layout="HND", is_causal=False)
-    _check(actual, expected, "eager Triton autotuned")
+    _check(actual, expected, "eager autotuned")
 
 
 def test_compile_autotuned() -> None:
@@ -21,4 +21,4 @@ def test_compile_autotuned() -> None:
         return sageattn_qk_int8_pv_fp16_triton(q, k, v, tensor_layout="HND", is_causal=False)
 
     actual = fn(q, k, v)
-    _check(actual, expected, "compile Triton autotuned")
+    _check(actual, expected, "compile autotuned")

@@ -17,9 +17,9 @@ def _empty_lse(query: torch.Tensor, tensor_layout: int, return_lse: bool) -> tor
         qo_len = query.size(2)
 
     if return_lse:
-        lse = torch.empty((batch_size, num_qo_heads, qo_len), dtype=torch.float32, device=query.device)
+        lse = torch.empty((batch_size, num_qo_heads, qo_len), device=query.device, dtype=torch.float32)
     else:
-        lse = torch.empty((0,), dtype=torch.float32, device=query.device)
+        lse = torch.empty((0,), device=query.device, dtype=torch.float32)
     return lse
 
 

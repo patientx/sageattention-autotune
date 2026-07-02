@@ -4,7 +4,7 @@ import torch
 
 from .triton.attn_qk_int8_per_block import forward as _attn_forward
 from .triton.quant_per_block import per_block_int8
-from .triton_autotune import _eager_triton_autotune_select, _sageattn_triton_autotuned
+from .triton_autotune import _eager_autotune_select, _sageattn_triton_autotuned
 from .utils import DEFAULT_PV_ACCUM_DTYPE, LOG2_E, _lse_correction, _pad_qkv
 
 SageAttnResult = Union[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]
@@ -62,7 +62,7 @@ def sageattn_qk_int8_pv_fp16_triton(
             smooth_k,
         )
 
-    config = _eager_triton_autotune_select(
+    config = _eager_autotune_select(
         q,
         k,
         v,

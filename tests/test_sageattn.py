@@ -56,14 +56,32 @@ def _error_report(actual: torch.Tensor, expected: torch.Tensor) -> tuple[bool, s
     fro_rel_err = (torch.linalg.vector_norm(diff) / torch.linalg.vector_norm(expected).clamp(min=1e-6)).item()
     max_abs_err = diff.abs().max().item()
 
-    passed = fro_rel_err <= 0.02 and max_abs_err <= 0.1
+    passed = fro_rel_err <= 0.014 and max_abs_err <= 0.1
     msg = f"fro_rel_err={fro_rel_err:.3g} max_abs_err={max_abs_err:.3g}"
     return passed, msg
 
 
+def _mode_id(mode: tuple[int, torch.dtype, str, bool, str, bool]) -> str:
+    head_dim, dtype, tensor_layout, is_causal, pv_accum_dtype, smooth_k = mode
+    return (
+        f"head_dim={head_dim}-dtype={dtype}-layout={tensor_layout}-causal={is_causal}-"
+        f"pv={pv_accum_dtype}-smooth_k={smooth_k}"
+    )
+
+
+def _valid_cases():
+    device_index = torch.cuda.current_device()
+    cases = []
+    for config in _AUTOTUNE_CONFIGS:
+        for mode in _MODES:
+            head_dim, _, _, is_causal, _, _ = mode
+            if config in _valid_configs(head_dim, is_causal, device_index):
+                cases.append(pytest.param(config, mode, id=f"config={config}-{_mode_id(mode)}"))
+    return tuple(cases)
+
+
 def _run_case(
     config: tuple[int, int, int, int],
-    *,
     head_dim: int,
     dtype: torch.dtype,
     tensor_layout: str,
@@ -91,37 +109,10 @@ def _run_case(
     return _error_report(actual, expected)
 
 
-@pytest.mark.parametrize("config", _AUTOTUNE_CONFIGS, ids=str)
-def test_sageattn_cuda_autotune_config(config: tuple[int, int, int, int]) -> None:
-    config_errors = []
-    config_tested = 0
-
-    for head_dim, dtype, tensor_layout, is_causal, pv_accum_dtype, smooth_k in _MODES:
-        q, _, _ = _make_qkv(head_dim=head_dim, tensor_layout=tensor_layout, dtype=dtype)
-        if config not in _valid_configs(q.size(-1), is_causal, q.device.index):
-            continue
-
-        config_tested += 1
-        name = (
-            f"head_dim={head_dim} dtype={dtype} layout={tensor_layout} is_causal={is_causal} "
-            f"pv_accum_dtype={pv_accum_dtype} smooth_k={smooth_k}"
-        )
-        try:
-            passed, msg = _run_case(
-                config,
-                head_dim=head_dim,
-                dtype=dtype,
-                tensor_layout=tensor_layout,
-                is_causal=is_causal,
-                pv_accum_dtype=pv_accum_dtype,
-                smooth_k=smooth_k,
-            )
-        except Exception as e:
-            passed = False
-            msg = f"error={e}"
-
-        if not passed:
-            config_errors.append(f"{name}: {msg}")
-
-    assert config_tested > 0
-    assert not config_errors, "\n".join(config_errors)
+@pytest.mark.parametrize(("config", "mode"), _valid_cases())
+def test_sageattn_cuda_autotune_config(
+    config: tuple[int, int, int, int],
+    mode: tuple[int, torch.dtype, str, bool, str, bool],
+) -> None:
+    passed, msg = _run_case(config, *mode)
+    assert passed, msg
