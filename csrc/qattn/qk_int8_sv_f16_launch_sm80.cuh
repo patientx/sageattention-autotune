@@ -295,12 +295,9 @@ Tensor run_sm80_qk_attn(const Tensor &query,
   sageattention::dispatch::fp16_dtype(ctx.output.scalar_type(), [&]<typename DTypeOut>() {
     sageattention::dispatch::head_dim(ctx.params.head_dim, [&]<int HeadDim>() {
       sageattention::dispatch::boolean(ctx.is_causal, [&]<bool IsCausal>() {
-        // ReturnLse is currently disabled for compilation speed
-        // sageattention::dispatch::boolean(ctx.return_lse, [&]<bool ReturnLse>() {
-        //   launch_configured_sm80_qk_kernel<HeadDim, IsCausal, ReturnLse, DTypeOut, DTypeSVAccum, UseInstBuffer, DenominatorAccumUnit, FuseVMean>(ctx);
-        // });
-
-        launch_configured_sm80_qk_kernel<HeadDim, IsCausal, false, DTypeOut, DTypeSVAccum, UseInstBuffer, DenominatorAccumUnit, FuseVMean>(ctx);
+        sageattention::dispatch::boolean(ctx.return_lse, [&]<bool ReturnLse>() {
+          launch_configured_sm80_qk_kernel<HeadDim, IsCausal, ReturnLse, DTypeOut, DTypeSVAccum, UseInstBuffer, DenominatorAccumUnit, FuseVMean>(ctx);
+        });
       });
     });
   });

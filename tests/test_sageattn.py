@@ -2,8 +2,6 @@ from itertools import product
 
 import pytest
 import torch
-import torch.nn.functional as F
-from torch.nn.attention import SDPBackend, sdpa_kernel
 
 from sageattention.cuda_autotune import _AUTOTUNE_CONFIGS, _valid_configs
 
@@ -14,6 +12,7 @@ _MODES = tuple(
         ("HND", "NHD"),
         (False, True),
         ("fp32", "fp16", "fp16+fp32"),
+        (False, True),
         (False, True),
     )
 )
@@ -37,35 +36,89 @@ def _make_qkv(
     return q, k, v
 
 
-def _expected(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, tensor_layout: str, is_causal: bool) -> torch.Tensor:
+def _to_flash_layout(x: torch.Tensor, tensor_layout: str) -> torch.Tensor:
+    if tensor_layout == "HND":
+        return x.transpose(1, 2).contiguous()
     if tensor_layout == "NHD":
-        q = q.transpose(1, 2)
-        k = k.transpose(1, 2)
-        v = v.transpose(1, 2)
-
-    with sdpa_kernel(SDPBackend.MATH):
-        expected = F.scaled_dot_product_attention(q, k, v, is_causal=is_causal)
-
-    return expected.transpose(1, 2) if tensor_layout == "NHD" else expected
+        return x
+    raise ValueError("tensor_layout must be 'NHD' or 'HND'.")
 
 
-def _error_report(actual: torch.Tensor, expected: torch.Tensor) -> tuple[bool, str]:
+def _from_flash_layout(x: torch.Tensor, tensor_layout: str) -> torch.Tensor:
+    if tensor_layout == "HND":
+        return x.transpose(1, 2).contiguous()
+    if tensor_layout == "NHD":
+        return x
+    raise ValueError("tensor_layout must be 'NHD' or 'HND'.")
+
+
+def _expected(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    tensor_layout: str,
+    is_causal: bool,
+    return_lse: bool = False,
+) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+    flash_attn = pytest.importorskip("flash_attn", reason="flash_attn is not installed")
+    result = flash_attn.flash_attn_func(
+        _to_flash_layout(q, tensor_layout),
+        _to_flash_layout(k, tensor_layout),
+        _to_flash_layout(v, tensor_layout),
+        dropout_p=0,
+        softmax_scale=q.size(-1) ** -0.5,
+        causal=is_causal,
+        return_attn_probs=return_lse,
+    )
+    if return_lse:
+        expected, lse, _ = result
+        return _from_flash_layout(expected, tensor_layout), lse
+    return _from_flash_layout(result, tensor_layout)
+
+
+def _error_report(actual: torch.Tensor, expected: torch.Tensor, rtol: float, atol: float) -> tuple[bool, str]:
+    if actual.shape != expected.shape:
+        return False, f"shape={tuple(actual.shape)} expected shape={tuple(expected.shape)}"
+
     actual = actual.float()
     expected = expected.float()
     diff = actual - expected
     fro_rel_err = (torch.linalg.vector_norm(diff) / torch.linalg.vector_norm(expected).clamp(min=1e-6)).item()
     max_abs_err = diff.abs().max().item()
 
-    passed = fro_rel_err <= 0.014 and max_abs_err <= 0.1
+    passed = fro_rel_err <= rtol and max_abs_err <= atol
     msg = f"fro_rel_err={fro_rel_err:.3g} max_abs_err={max_abs_err:.3g}"
     return passed, msg
 
 
-def _mode_id(mode: tuple[int, torch.dtype, str, bool, str, bool]) -> str:
-    head_dim, dtype, tensor_layout, is_causal, pv_accum_dtype, smooth_k = mode
+def _attention_report(
+    actual: torch.Tensor | tuple[torch.Tensor, torch.Tensor],
+    expected: torch.Tensor | tuple[torch.Tensor, torch.Tensor],
+    *,
+    rtol: float = 0.013,
+    atol: float = 0.08,
+    lse_rtol: float = 0.0003,
+    lse_atol: float = 0.05,
+) -> tuple[bool, str]:
+    if isinstance(expected, tuple):
+        if isinstance(actual, tuple):
+            output_passed, output_msg = _error_report(actual[0], expected[0], rtol, atol)
+            lse_passed, lse_msg = _error_report(actual[1], expected[1], lse_rtol, lse_atol)
+            return output_passed and lse_passed, f"{output_msg}; lse: {lse_msg}"
+        else:
+            return False, "expected output and lse, got output only"
+    else:
+        if isinstance(actual, tuple):
+            return False, "expected output only, got output and lse"
+        else:
+            return _error_report(actual, expected, rtol, atol)
+
+
+def _mode_id(mode: tuple[int, torch.dtype, str, bool, str, bool, bool]) -> str:
+    head_dim, dtype, tensor_layout, is_causal, pv_accum_dtype, smooth_k, return_lse = mode
     return (
         f"head_dim={head_dim}-dtype={dtype}-layout={tensor_layout}-causal={is_causal}-"
-        f"pv={pv_accum_dtype}-smooth_k={smooth_k}"
+        f"pv={pv_accum_dtype}-smooth_k={smooth_k}-return_lse={return_lse}"
     )
 
 
@@ -74,7 +127,7 @@ def _valid_cases():
     cases = []
     for config in _AUTOTUNE_CONFIGS:
         for mode in _MODES:
-            head_dim, _, _, is_causal, _, _ = mode
+            head_dim, _, _, is_causal, _, _, _ = mode
             if config in _valid_configs(head_dim, is_causal, device_index):
                 cases.append(pytest.param(config, mode, id=f"config={config}-{_mode_id(mode)}"))
     return tuple(cases)
@@ -88,10 +141,11 @@ def _run_case(
     is_causal: bool,
     pv_accum_dtype: str,
     smooth_k: bool,
+    return_lse: bool,
 ) -> tuple[bool, str]:
     cuda_attn = pytest.importorskip("sageattention.cuda_attn", reason="sageattention CUDA kernel is not installed")
     q, k, v = _make_qkv(head_dim=head_dim, tensor_layout=tensor_layout, dtype=dtype)
-    expected = _expected(q, k, v, tensor_layout, is_causal)
+    expected = _expected(q, k, v, tensor_layout, is_causal, return_lse)
 
     actual = cuda_attn._sageattn_configured(
         q,
@@ -102,17 +156,16 @@ def _run_case(
         pv_accum_dtype,
         smooth_k,
         False,
-        False,
+        return_lse,
         config,
     )
-
-    return _error_report(actual, expected)
+    return _attention_report(actual, expected)
 
 
 @pytest.mark.parametrize(("config", "mode"), _valid_cases())
 def test_sageattn_cuda_autotune_config(
     config: tuple[int, int, int, int],
-    mode: tuple[int, torch.dtype, str, bool, str, bool],
+    mode: tuple[int, torch.dtype, str, bool, str, bool, bool],
 ) -> None:
     passed, msg = _run_case(config, *mode)
     assert passed, msg

@@ -10,7 +10,8 @@ except (ImportError, OSError):
 else:
     from .cuda_attn import sageattn_qk_int8_pv_fp16_cuda
 
-if os.getenv("SAGEATTN_BACKEND", "").lower() == "triton":
+SAGEATTN_BACKEND = os.getenv("SAGEATTN_BACKEND", "").lower()
+if SAGEATTN_BACKEND == "triton":
     sageattn = sageattn_qk_int8_pv_fp16_triton
 else:
     sageattn = sageattn_qk_int8_pv_fp16_cuda

@@ -135,12 +135,12 @@ register_custom_op_autotuning(
     _sageattn_autotuned,
     config_generator=lambda fake_tensors: [
         CustomOpConfig(
-            blk_q=cfg[0],
-            blk_k=cfg[1],
-            warp_q=cfg[2],
-            warp_k=cfg[3],
+            blk_q=config[0],
+            blk_k=config[1],
+            warp_q=config[2],
+            warp_k=config[3],
         )
-        for cfg in _valid_configs(
+        for config in _valid_configs(
             fake_tensors["q"].size(-1),
             False,  # For now we hardcode is_causal=False and we assume it allows more configs than is_causal=True
             fake_tensors["q"].device.index,

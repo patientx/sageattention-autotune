@@ -2,7 +2,7 @@ from itertools import product
 
 import pytest
 import torch
-from test_sageattn import _error_report, _expected, _make_qkv, _mode_id
+from test_sageattn import _attention_report, _expected, _make_qkv, _mode_id
 
 from sageattention.triton_attn import _sageattn_triton_configured
 from sageattention.triton_autotune import _TRITON_BLOCK_CONFIGS, _valid_configs
@@ -15,6 +15,7 @@ _MODES = tuple(
         (False, True),
         ("fp32", "fp16"),
         (False, True),
+        (False, True),
     )
 )
 
@@ -24,7 +25,7 @@ def _valid_cases():
     cases = []
     for block_config in _TRITON_BLOCK_CONFIGS:
         for mode in _MODES:
-            head_dim, _, _, is_causal, _, _ = mode
+            head_dim, _, _, is_causal, _, _, _ = mode
             if block_config in _valid_configs(head_dim, is_causal, device_index):
                 cases.append(pytest.param(block_config, mode, id=f"block={block_config}-{_mode_id(mode)}"))
     return tuple(cases)
@@ -38,9 +39,10 @@ def _run_case(
     is_causal: bool,
     pv_accum_dtype: str,
     smooth_k: bool,
+    return_lse: bool,
 ) -> tuple[bool, str]:
     q, k, v = _make_qkv(head_dim=head_dim, tensor_layout=tensor_layout, dtype=dtype)
-    expected = _expected(q, k, v, tensor_layout, is_causal)
+    expected = _expected(q, k, v, tensor_layout, is_causal, return_lse)
 
     actual = _sageattn_triton_configured(
         q,
@@ -50,17 +52,16 @@ def _run_case(
         is_causal,
         pv_accum_dtype,
         smooth_k,
-        False,
+        return_lse,
         block_config,
     )
-
-    return _error_report(actual, expected)
+    return _attention_report(actual, expected, rtol=0.014, atol=0.1, lse_rtol=0.0004, lse_atol=0.06)
 
 
 @pytest.mark.parametrize(("block_config", "mode"), _valid_cases())
 def test_sageattn_triton_block_config(
     block_config: tuple[int, int],
-    mode: tuple[int, torch.dtype, str, bool, str, bool],
+    mode: tuple[int, torch.dtype, str, bool, str, bool, bool],
 ) -> None:
     passed, msg = _run_case(block_config, *mode)
     assert passed, msg

@@ -51,7 +51,9 @@ def sageattn_qk_int8_pv_fp16_triton(
 ) -> SageAttnResult:
     assert attn_mask is None
 
-    if torch.compiler.is_compiling() and not return_lse:
+    if torch.compiler.is_compiling():
+        if return_lse:
+            raise NotImplementedError("torch.compile with return_lse=True is not supported.")
         return _sageattn_triton_autotuned(
             q,
             k,
