@@ -1,24 +1,20 @@
+import atexit
 import functools
 
 import torch
 from torch._inductor.kernel.custom_op import CustomOpConfig, register_custom_op_autotuning
 
 from . import autotune_utils
+from .autotune_cache import load_cache, save_cache
 from .triton.attn_autotune import _valid_attn_configs
 
+# RDNA2 (gfx1030 / RX 6800) tuning: smaller tiles than upstream's SM80 defaults.
 _TRITON_BLOCK_CONFIGS = (
-    (256, 64),
-    (128, 128),
-    (128, 64),
-    (128, 32),
-    (64, 128),
-    (64, 64),
-    (64, 32),
-    (32, 128),
-    (32, 64),
     (32, 32),
+    (32, 16),
 )
-_TRITON_AUTOTUNE_CACHE: dict[object, tuple[int, int]] = {}
+_TRITON_AUTOTUNE_CACHE: dict[object, tuple[int, int]] = load_cache()
+atexit.register(save_cache, _TRITON_AUTOTUNE_CACHE)
 
 
 @functools.cache
@@ -60,11 +56,9 @@ def _eager_autotune_select(
     key = autotune_utils._tensor_autotune_cache_key(
         q, k, v, tensor_layout, is_causal, pv_accum_dtype, smooth_k, return_lse
     )
-    return autotune_utils._eager_autotune_select(
-        block_configs,
-        _TRITON_AUTOTUNE_CACHE,
-        key,
-        lambda block_config: _sageattn_triton_configured(
+
+    def benchmark(block_config: tuple[int, int]):
+        return _sageattn_triton_configured(
             q,
             k,
             v,
@@ -74,8 +68,19 @@ def _eager_autotune_select(
             smooth_k,
             return_lse,
             block_config,
-        ),
+        )
+
+    was_cached = key in _TRITON_AUTOTUNE_CACHE
+    best_config = autotune_utils._eager_autotune_select(
+        block_configs,
+        _TRITON_AUTOTUNE_CACHE,
+        key,
+        benchmark,
     )
+    if not was_cached:
+        save_cache(_TRITON_AUTOTUNE_CACHE)
+
+    return best_config
 
 
 @torch.library.custom_op("sageattention_internal::sageattn_triton_autotuned", mutates_args=())
