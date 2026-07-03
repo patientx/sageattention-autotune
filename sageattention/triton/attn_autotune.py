@@ -6,15 +6,15 @@ import triton
 from ..autotune_utils import _shared_memory_limit
 from ..utils import _padded_head_dim
 
+# RDNA2 (gfx1030 / RX 6800) tuning: fewer warps and shallower pipelines than upstream's SM80 defaults.
 _TRITON_ATTN_CONFIGS = (
     # (num_warps, num_stages)
+    (1, 1),
+    (2, 1),
+    (4, 1),
+    (1, 2),
+    (2, 2),
     (4, 2),
-    (4, 3),
-    (4, 4),
-    # num_warps = 8 is currently disabled because it does not help much
-    # (8, 2),
-    # (8, 3),
-    # (8, 4),
 )
 
 
