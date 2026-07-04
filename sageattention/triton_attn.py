@@ -4,7 +4,7 @@ import torch
 
 from .triton.attn_qk_int8_per_block import forward as _attn_forward
 from .triton.quant_per_block import per_block_int8
-from .triton_autotune import _eager_autotune_select, _sageattn_triton_autotuned
+from .triton_autotune import _eager_triton_autotune_select, _sageattn_triton_autotuned
 from .utils import DEFAULT_PV_ACCUM_DTYPE, LOG2_E, _lse_correction, _pad_qkv
 
 SageAttnResult = Union[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]
@@ -51,9 +51,7 @@ def sageattn_qk_int8_pv_fp16_triton(
 ) -> SageAttnResult:
     assert attn_mask is None
 
-    if torch.compiler.is_compiling():
-        if return_lse:
-            raise NotImplementedError("torch.compile with return_lse=True is not supported.")
+    if torch.compiler.is_compiling() and not return_lse:
         return _sageattn_triton_autotuned(
             q,
             k,
@@ -64,7 +62,7 @@ def sageattn_qk_int8_pv_fp16_triton(
             smooth_k,
         )
 
-    config = _eager_autotune_select(
+    config = _eager_triton_autotune_select(
         q,
         k,
         v,
@@ -98,7 +96,7 @@ def _sageattn_triton_configured(
     pv_accum_dtype: str,
     smooth_k: bool,
     return_lse: Literal[False],
-    block_config: tuple[int, int],
+    triton_config: tuple[int, int, int, int],
 ) -> torch.Tensor: ...
 
 
@@ -112,7 +110,7 @@ def _sageattn_triton_configured(
     pv_accum_dtype: str,
     smooth_k: bool,
     return_lse: Literal[True],
-    block_config: tuple[int, int],
+    triton_config: tuple[int, int, int, int],
 ) -> tuple[torch.Tensor, torch.Tensor]: ...
 
 
@@ -125,7 +123,7 @@ def _sageattn_triton_configured(
     pv_accum_dtype: str,
     smooth_k: bool,
     return_lse: bool,
-    block_config: tuple[int, int],
+    triton_config: tuple[int, int, int, int],
 ) -> SageAttnResult:
     dtype = q.dtype
     if not q.is_cuda:
@@ -162,7 +160,7 @@ def _sageattn_triton_configured(
     if pv_accum_dtype not in ("fp32", "fp16"):
         raise ValueError("pv_accum_dtype must be 'fp32' or 'fp16'.")
 
-    block_m, block_n = block_config
+    block_m, block_n, attn_num_warps, attn_num_stages = triton_config
 
     q_int8, q_scale, k_int8, k_scale = per_block_int8(
         q,
@@ -184,6 +182,8 @@ def _sageattn_triton_configured(
         pv_accum_dtype=pv_accum_dtype,
         BLOCK_M=block_m,
         BLOCK_N=block_n,
+        attn_num_warps=attn_num_warps,
+        attn_num_stages=attn_num_stages,
         output_dtype=dtype,
         return_lse=return_lse,
     )
