@@ -1,4 +1,3 @@
-import functools
 import logging
 import os
 from collections.abc import Callable, Sequence
@@ -13,9 +12,8 @@ _logger = logging.getLogger(__name__)
 _AUTOTUNE_SEQ_LEN_BUCKETS = (16, 32, 64, 128, 256)
 
 
-@functools.cache
-def _shared_memory_limit(device_index: int) -> int:
-    props = torch.cuda.get_device_properties(device_index)
+def _shared_memory_limit(device: torch.device) -> int:
+    props = torch.cuda.get_device_properties(device)
     return getattr(props, "shared_memory_per_block_optin", props.shared_memory_per_block)
 
 
@@ -29,7 +27,7 @@ def _autotune_seq_len_bucket(seq_len: int) -> int:
     return triton.cdiv(seq_len, _AUTOTUNE_SEQ_LEN_BUCKETS[-1]) * _AUTOTUNE_SEQ_LEN_BUCKETS[-1]
 
 
-def _tensor_bucketed_shape_key(q: torch.Tensor, k: torch.Tensor, tensor_layout: str) -> tuple[int, ...]:
+def _logical_shape_autotune_key(q: torch.Tensor, k: torch.Tensor, tensor_layout: str) -> tuple[int, ...]:
     if tensor_layout == "NHD":
         batch_size, qo_len, num_qo_heads, head_dim = q.shape
         _, kv_len, num_kv_heads, _ = k.shape
@@ -73,7 +71,7 @@ def _tensor_autotune_cache_key(
     return (
         q.device.index,
         q.dtype,
-        _tensor_bucketed_shape_key(q, k, tensor_layout),
+        _logical_shape_autotune_key(q, k, tensor_layout),
         _tensor_stride_layout_key(q, tensor_layout),
         _tensor_stride_layout_key(k, tensor_layout),
         _tensor_stride_layout_key(v, tensor_layout),
@@ -81,14 +79,14 @@ def _tensor_autotune_cache_key(
     )
 
 
-def _valid_configs(
+def _valid_configs_for_head_dim(
     candidates: Sequence[ConfigT],
-    is_valid: Callable[[ConfigT, int, bool, int], bool],
+    is_valid: Callable[[ConfigT, int, bool, torch.device], bool],
     head_dim: int,
     is_causal: bool,
-    device_index: int,
+    device: torch.device,
 ) -> tuple[ConfigT, ...]:
-    configs = tuple(config for config in candidates if is_valid(config, head_dim, is_causal, device_index))
+    configs = tuple(config for config in candidates if is_valid(config, head_dim, is_causal, device))
     if not configs:
         raise RuntimeError(f"No valid config for head_dim={head_dim} is_causal={is_causal}.")
     return configs
