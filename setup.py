@@ -81,7 +81,7 @@ if os.name == "nt":
 else:
     cxx_flags = ["-O3", "-DENABLE_BF16"]
 
-cxx_flags += ["-DPy_LIMITED_API=0x030A0000", "-DTORCH_STABLE_ONLY"]
+cxx_flags += ["-DTORCH_STABLE_ONLY"]
 
 nvcc_flags = [
     "-O3",
@@ -92,7 +92,6 @@ nvcc_flags = [
     "-diag-suppress=174",
     "-diag-suppress=177",
     "-diag-suppress=221",
-    "-DPy_LIMITED_API=0x030A0000",
     "-DTORCH_STABLE_ONLY",
     "-gencode",
     "arch=compute_80,code=sm_80",

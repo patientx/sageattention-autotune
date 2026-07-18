@@ -20,6 +20,7 @@ def sageattn_qk_int8_pv_fp16_triton(
     pv_accum_dtype: str = DEFAULT_PV_ACCUM_DTYPE,
     smooth_k: bool = True,
     return_lse: Literal[False] = False,
+    sm_scale: object = None,
     attn_mask: object = None,
 ) -> torch.Tensor: ...
 
@@ -34,6 +35,7 @@ def sageattn_qk_int8_pv_fp16_triton(
     pv_accum_dtype: str = DEFAULT_PV_ACCUM_DTYPE,
     smooth_k: bool = True,
     return_lse: Literal[True] = True,
+    sm_scale: object = None,
     attn_mask: object = None,
 ) -> tuple[torch.Tensor, torch.Tensor]: ...
 
@@ -47,8 +49,10 @@ def sageattn_qk_int8_pv_fp16_triton(
     pv_accum_dtype: str = DEFAULT_PV_ACCUM_DTYPE,
     smooth_k: bool = True,
     return_lse: bool = False,
+    sm_scale: object = None,  # For ComfyUI compatibility. Not implemented yet to simplify torch.compile support.
     attn_mask: object = None,  # For ComfyUI compatibility. Not implemented yet.
 ) -> SageAttnResult:
+    assert sm_scale is None
     assert attn_mask is None
 
     if torch.compiler.is_compiling() and not return_lse:
