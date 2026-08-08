@@ -18,9 +18,6 @@ import torch
 import triton
 import triton.language as tl
 
-from .quant_per_block import _quantize_tile_to_int8, _round_to_int8
-
-
 @triton.jit
 def quant_query_per_thread_int8_kernel(
     Input,
@@ -50,14 +47,13 @@ def quant_query_per_thread_int8_kernel(
     output_ptrs = Output + off_b * stride_oz + off_h * stride_oh + offs_n[:, None] * stride_on + offs_k[None, :]
     scale_ptrs = Scale + off_b * stride_sz + off_h * stride_sh + off_blk * 8 + off_tld
 
-    mask = offs_n[:, None] < L
-    x = tl.load(input_ptrs, mask=mask, other=0.0).to(tl.float32)
+    x = tl.load(input_ptrs, mask=offs_n[:, None] < L).to(tl.float32)
+    scale = tl.max(tl.abs(x)) / 127.0 + 0.0000001
+    x_int8 = x / scale
+    x_int8 += 0.5 * tl.where(x_int8 >= 0, 1, -1)
 
-    x_int8, scale = _quantize_tile_to_int8(x)
-
-    tl.store(output_ptrs, x_int8, mask=mask)
+    tl.store(output_ptrs, x_int8.to(tl.int8), mask=offs_n[:, None] < L)
     tl.store(scale_ptrs, scale)
-
 
 @triton.jit
 def quant_key_per_thread_int8_kernel(
@@ -96,38 +92,40 @@ def quant_key_per_thread_int8_kernel(
     output_ptrs1 = Output + off_b * stride_oz + off_h * stride_oh + offs_n1[:, None] * stride_on + offs_k[None, :]
     scale_ptrs = Scale + off_b * stride_sz + off_h * stride_sh + off_blk * 4 + off_tld
 
-    mask0 = offs_n0[:, None] < L
-    mask1 = offs_n1[:, None] < L
-    x0 = tl.load(input_ptrs0, mask=mask0, other=0.0).to(tl.float32)
-    x1 = tl.load(input_ptrs1, mask=mask1, other=0.0).to(tl.float32)
+    x0 = tl.load(input_ptrs0, mask=offs_n0[:, None] < L).to(tl.float32)
+                                
+                                                                   
+    x1 = tl.load(input_ptrs1, mask=offs_n1[:, None] < L).to(tl.float32)
 
     if HAS_MEAN:
         mean_ptrs = Mean + off_b * stride_mz + off_h * stride_mh + offs_k * stride_mk
         mean = tl.load(mean_ptrs).to(tl.float32)
-        x0 = tl.where(mask0, x0 - mean[None, :], 0.0)
-        x1 = tl.where(mask1, x1 - mean[None, :], 0.0)
+        x0 -= mean[None, :]
+        x1 -= mean[None, :]
 
-    scale = tl.maximum(tl.max(tl.abs(x0)), tl.max(tl.abs(x1))) / 127.5 + 1e-7
-    x0_int8 = _round_to_int8(x0 / scale)
-    x1_int8 = _round_to_int8(x1 / scale)
+    scale = tl.maximum(tl.max(tl.abs(x0)), tl.max(tl.abs(x1))) / 127.0 + 0.0000001
 
-    tl.store(output_ptrs0, x0_int8, mask=mask0)
-    tl.store(output_ptrs1, x1_int8, mask=mask1)
+    x0_int8 = x0 / scale
+    x1_int8 = x1 / scale
+    x0_int8 += 0.5 * tl.where(x0_int8 >= 0, 1, -1)
+    x1_int8 += 0.5 * tl.where(x1_int8 >= 0, 1, -1)
+
+    tl.store(output_ptrs0, x0_int8.to(tl.int8), mask=offs_n0[:, None] < L)
+    tl.store(output_ptrs1, x1_int8.to(tl.int8), mask=offs_n1[:, None] < L)
     tl.store(scale_ptrs, scale)
-
 
 def per_thread_int8(
     q: torch.Tensor,
     k: torch.Tensor,
-    km: torch.Tensor | None,
-    BLKQ: int,
-    WARPQ: int,
-    BLKK: int,
-    WARPK: int,
-    tensor_layout: str,
+    km: torch.Tensor | None = None,
+    BLKQ: int = 128,
+    WARPQ: int = 32,
+    BLKK: int = 64,
+    WARPK: int = 64,
+    tensor_layout: str = "HND",
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    q_int8 = torch.empty(q.shape, device=q.device, dtype=torch.int8)
-    k_int8 = torch.empty(k.shape, device=k.device, dtype=torch.int8)
+    q_int8 = torch.empty(q.shape, dtype=torch.int8, device=q.device)
+    k_int8 = torch.empty(k.shape, dtype=torch.int8, device=k.device)
 
     if tensor_layout == "HND":
         b, h_qo, qo_len, head_dim = q.shape
