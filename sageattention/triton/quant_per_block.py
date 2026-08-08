@@ -21,17 +21,28 @@ import triton.language as tl
 from ..autotune_utils import _autotune_seq_len_bucket
 
 
-@triton.jit
-def _round_to_int8(x):
-    x_int32 = tl.inline_asm_elementwise(
-        "cvt.rni.s32.f32 $0, $1;",
-        "=r,f",
-        [x],
-        dtype=tl.int32,
-        is_pure=True,
-        pack=1,
-    )
-    return x_int32.to(tl.int8)
+# The PTX form is CUDA-only: AMD rejects the 'f' constraint at compile time.
+_IS_HIP = triton.runtime.driver.active.get_current_target().backend == "hip"
+
+if _IS_HIP:
+
+    @triton.jit
+    def _round_to_int8(x):
+        return tl.floor(x + 0.5).to(tl.int32).to(tl.int8)
+
+else:
+
+    @triton.jit
+    def _round_to_int8(x):
+        x_int32 = tl.inline_asm_elementwise(
+            "cvt.rni.s32.f32 $0, $1;",
+            "=r,f",
+            [x],
+            dtype=tl.int32,
+            is_pure=True,
+            pack=1,
+        )
+        return x_int32.to(tl.int8)
 
 
 @triton.jit
