@@ -18,8 +18,8 @@ import torch
 import triton
 import triton.language as tl
 
-from ..autotune_utils import _autotune_seq_len_bucket
-from .attn_autotune import _TRITON_ATTN_CONFIGS, _prune_attn_configs
+                                                     
+                                                                    
 
 LOG2_E = 1.44269504088896340736
 
@@ -45,10 +45,10 @@ def _attn_fwd_inner(
     STAGE: tl.constexpr,
     IS_CAUSAL: tl.constexpr,
     PV_ACCUM_FP32: tl.constexpr,
-    IS_EVEN_M: tl.constexpr,
-    IS_EVEN_N: tl.constexpr,
-    offs_m,
-    offs_n,
+    offs_m: tl.constexpr,
+    offs_n: tl.constexpr,
+           
+           
 ):
     if IS_CAUSAL:
         if STAGE == 1:
@@ -64,19 +64,20 @@ def _attn_fwd_inner(
 
     for start_n in range(lo, hi, BLOCK_N):
         start_n = tl.multiple_of(start_n, BLOCK_N)
-        if IS_EVEN_N:
-            k = tl.load(K_ptrs)
-        else:
-            k_mask = offs_n[None, :] < (kv_len - start_n)
-            k = tl.load(K_ptrs, mask=k_mask)
+                     
+                               
+             
+        k_mask = offs_n[None, :] < (kv_len - start_n)
+        k = tl.load(K_ptrs, mask=k_mask)
         k_scale = tl.load(K_scale_ptr)
         qk = tl.dot(q, k).to(tl.float32) * (q_scale * k_scale * sm_scale)
 
+        mask = k_mask
         if IS_CAUSAL:
             if STAGE == 2:
-                qk = tl.where(offs_m[:, None] >= (start_n + offs_n[None, :]), qk, float("-inf"))
-        elif not IS_EVEN_N:
-            qk = tl.where(k_mask, qk, float("-inf"))
+                mask &= offs_m[:, None] >= (start_n + offs_n[None, :])
+                           
+        qk += tl.where(mask, 0, float("-inf"))
 
         m_ij = tl.maximum(m_i, tl.max(qk, 1))
         qk -= m_ij[:, None]
@@ -88,10 +89,10 @@ def _attn_fwd_inner(
         l_i = l_i * alpha + l_ij
         acc = acc * alpha[:, None]
 
-        if IS_EVEN_N:
-            v = tl.load(V_ptrs)
-        else:
-            v = tl.load(V_ptrs, mask=offs_n[:, None] < (kv_len - start_n), other=0.0)
+                     
+                               
+             
+        v = tl.load(V_ptrs, mask=offs_n[:, None] < (kv_len - start_n))
         p = p.to(tl.float16)
         if PV_ACCUM_FP32:
             acc += tl.dot(p, v, out_dtype=tl.float32)
@@ -106,26 +107,26 @@ def _attn_fwd_inner(
     return acc, l_i, m_i
 
 
-@triton.autotune(
-    configs=[
-        triton.Config({}, num_warps=num_warps, num_stages=num_stages) for num_warps, num_stages in _TRITON_ATTN_CONFIGS
-    ],
-    key=[
-        "H",
-        "num_kv_groups",
-        "HEAD_DIM",
-        "BLOCK_M",
-        "BLOCK_N",
-        "RETURN_LSE",
-        "IS_CAUSAL",
-        "PV_ACCUM_FP32",
-        "IS_EVEN_M",
-        "IS_EVEN_N",
-        "Q_BUCKET",
-        "K_BUCKET",
-    ],
-    prune_configs_by={"early_config_prune": _prune_attn_configs},
-)
+                 
+             
+                                                                                                                       
+      
+         
+            
+                        
+                   
+                  
+                  
+                     
+                    
+                        
+                    
+                    
+                   
+                   
+      
+                                                                 
+ 
 @triton.jit
 def _attn_fwd(
     Q,
@@ -158,10 +159,10 @@ def _attn_fwd(
     RETURN_LSE: tl.constexpr,
     IS_CAUSAL: tl.constexpr,
     PV_ACCUM_FP32: tl.constexpr,
-    IS_EVEN_M: tl.constexpr,
-    IS_EVEN_N: tl.constexpr,
-    Q_BUCKET: tl.constexpr,
-    K_BUCKET: tl.constexpr,
+                            
+                            
+                           
+                           
 ):
     start_m = tl.program_id(0)
 
@@ -189,10 +190,10 @@ def _attn_fwd(
     l_i = tl.zeros([BLOCK_M], dtype=tl.float32) + 1.0
     acc = tl.zeros([BLOCK_M, HEAD_DIM], dtype=tl.float32)
 
-    if IS_EVEN_M:
-        q = tl.load(Q_ptrs)
-    else:
-        q = tl.load(Q_ptrs, mask=offs_m[:, None] < qo_len)
+                 
+                           
+         
+    q = tl.load(Q_ptrs, mask=offs_m[:, None] < qo_len)
     q_scale = tl.load(Q_scale_ptr)
 
     if IS_CAUSAL:
@@ -216,8 +217,8 @@ def _attn_fwd(
             1,
             IS_CAUSAL,
             PV_ACCUM_FP32,
-            IS_EVEN_M,
-            IS_EVEN_N,
+                      
+                      
             offs_m,
             offs_n,
         )
@@ -241,8 +242,8 @@ def _attn_fwd(
             2,
             IS_CAUSAL,
             PV_ACCUM_FP32,
-            IS_EVEN_M,
-            IS_EVEN_N,
+                      
+                      
             offs_m,
             offs_n,
         )
@@ -267,25 +268,25 @@ def _attn_fwd(
             0,
             IS_CAUSAL,
             PV_ACCUM_FP32,
-            IS_EVEN_M,
-            IS_EVEN_N,
+                      
+                      
             offs_m,
             offs_n,
         )
 
     acc = acc / l_i[:, None]
-    if IS_EVEN_M:
-        tl.store(O_block_ptr, acc.to(Out.type.element_ty))
-    else:
-        tl.store(O_block_ptr, acc.to(Out.type.element_ty), mask=(offs_m[:, None] < qo_len))
+                 
+                                                          
+         
+    tl.store(O_block_ptr, acc.to(Out.type.element_ty), mask=(offs_m[:, None] < qo_len))
 
     if RETURN_LSE:
         lse_ptrs = Lse + (off_z * qo_len * H + off_h * qo_len) + offs_m
         l_i = tl.log2(l_i) + m_i
-        if IS_EVEN_M:
-            tl.store(lse_ptrs, l_i)
-        else:
-            tl.store(lse_ptrs, l_i, mask=(offs_m < qo_len))
+                     
+                                   
+             
+        tl.store(lse_ptrs, l_i, mask=(offs_m < qo_len))
 
 
 def forward(
@@ -294,15 +295,17 @@ def forward(
     v: torch.Tensor,
     q_scale: torch.Tensor,
     k_scale: torch.Tensor,
-    tensor_layout: str,
-    is_causal: bool,
-    pv_accum_dtype: str,
-    BLOCK_M: int,
-    BLOCK_N: int,
-    output_dtype: torch.dtype,
-    return_lse: bool,
+    tensor_layout: str = "HND",
+    is_causal: bool = False,
+    pv_accum_dtype: str = "fp32",
+    BLOCK_M: int = 128,
+    BLOCK_N: int = 64,
+    attn_num_warps: int = 4,
+    attn_num_stages: int = 3,
+    output_dtype: torch.dtype = torch.float16,
+    return_lse: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    o = torch.empty(q.shape, device=q.device, dtype=output_dtype)
+    o = torch.empty(q.shape, dtype=output_dtype, device=q.device)
 
     if tensor_layout == "HND":
         b, h_qo, qo_len, head_dim = q.shape
@@ -334,9 +337,9 @@ def forward(
     num_kv_groups = h_qo // h_kv
 
     if return_lse:
-        lse = torch.empty([b, h_qo, qo_len], device=q.device, dtype=torch.float32)
+        lse = torch.empty([b, h_qo, qo_len], dtype=torch.float32, device=q.device)
     else:
-        lse = torch.empty([0], device=q.device, dtype=torch.float32)
+        lse = torch.empty([0], dtype=torch.float32, device=q.device)
 
     grid = (triton.cdiv(qo_len, BLOCK_M), h_qo, b)
     _attn_fwd[grid](
@@ -370,10 +373,10 @@ def forward(
         RETURN_LSE=return_lse,
         IS_CAUSAL=is_causal,
         PV_ACCUM_FP32=(pv_accum_dtype == "fp32"),
-        IS_EVEN_M=(qo_len % BLOCK_M == 0),
-        IS_EVEN_N=(kv_len % BLOCK_N == 0),
-        Q_BUCKET=_autotune_seq_len_bucket(qo_len),
-        K_BUCKET=_autotune_seq_len_bucket(kv_len),
+        num_warps=attn_num_warps,
+        num_stages=attn_num_stages,
+                                                  
+                                                  
     )
 
     return o, lse
