@@ -19,7 +19,6 @@ import triton
 import triton.language as tl
 
 from ..autotune_utils import _autotune_seq_len_bucket
-from .attn_autotune import _TRITON_ATTN_CONFIGS, _prune_attn_configs
 
 LOG2_E = 1.44269504088896340736
 
@@ -106,26 +105,6 @@ def _attn_fwd_inner(
     return acc, l_i, m_i
 
 
-@triton.autotune(
-    configs=[
-        triton.Config({}, num_warps=num_warps, num_stages=num_stages) for num_warps, num_stages in _TRITON_ATTN_CONFIGS
-    ],
-    key=[
-        "H",
-        "num_kv_groups",
-        "HEAD_DIM",
-        "BLOCK_M",
-        "BLOCK_N",
-        "RETURN_LSE",
-        "IS_CAUSAL",
-        "PV_ACCUM_FP32",
-        "IS_EVEN_M",
-        "IS_EVEN_N",
-        "Q_BUCKET",
-        "K_BUCKET",
-    ],
-    prune_configs_by={"early_config_prune": _prune_attn_configs},
-)
 @triton.jit
 def _attn_fwd(
     Q,
@@ -299,6 +278,8 @@ def forward(
     pv_accum_dtype: str,
     BLOCK_M: int,
     BLOCK_N: int,
+    attn_num_warps: int,
+    attn_num_stages: int,
     output_dtype: torch.dtype,
     return_lse: bool,
 ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -374,6 +355,8 @@ def forward(
         IS_EVEN_N=(kv_len % BLOCK_N == 0),
         Q_BUCKET=_autotune_seq_len_bucket(qo_len),
         K_BUCKET=_autotune_seq_len_bucket(kv_len),
+        num_warps=attn_num_warps,
+        num_stages=attn_num_stages,
     )
 
     return o, lse
