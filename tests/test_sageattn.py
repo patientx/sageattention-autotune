@@ -123,12 +123,12 @@ def _mode_id(mode: tuple[int, torch.dtype, str, bool, str, bool, bool]) -> str:
 
 
 def _valid_cases():
-    device_index = torch.cuda.current_device()
+    device = torch.device("cuda", torch.cuda.current_device())
     cases = []
     for config in _AUTOTUNE_CONFIGS:
         for mode in _MODES:
             head_dim, _, _, is_causal, _, _, _ = mode
-            if config in _valid_configs(head_dim, is_causal, device_index):
+            if config in _valid_configs(head_dim, is_causal, device):
                 cases.append(pytest.param(config, mode, id=f"config={config}-{_mode_id(mode)}"))
     return tuple(cases)
 
