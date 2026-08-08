@@ -60,7 +60,10 @@ def _expected(
     is_causal: bool,
     return_lse: bool = False,
 ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
-    flash_attn = pytest.importorskip("flash_attn", reason="flash_attn is not installed")
+    try:
+        import flash_attn
+    except ImportError:
+        return _reference_attention(q, k, v, tensor_layout, is_causal, return_lse)
     result = flash_attn.flash_attn_func(
         _to_flash_layout(q, tensor_layout),
         _to_flash_layout(k, tensor_layout),
@@ -74,6 +77,36 @@ def _expected(
         expected, lse, _ = result
         return _from_flash_layout(expected, tensor_layout), lse
     return _from_flash_layout(result, tensor_layout)
+
+
+def _reference_attention(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    tensor_layout: str,
+    is_causal: bool,
+    return_lse: bool,
+) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+    """fp32 reference for when flash_attn is not installed."""
+    if tensor_layout == "NHD":
+        qt, kt, vt = (x.transpose(1, 2) for x in (q, k, v))
+    elif tensor_layout == "HND":
+        qt, kt, vt = q, k, v
+    else:
+        raise ValueError("tensor_layout must be 'NHD' or 'HND'.")
+
+    scores = (qt.float() @ kt.float().transpose(-1, -2)) * qt.size(-1) ** -0.5
+    if is_causal:
+        qo_len, kv_len = qt.size(-2), kt.size(-2)
+        causal = torch.ones(qo_len, kv_len, device=q.device, dtype=torch.bool).tril(kv_len - qo_len)
+        scores = scores.masked_fill(~causal, float("-inf"))
+
+    out = (torch.softmax(scores, dim=-1) @ vt.float()).to(q.dtype)
+    if tensor_layout == "NHD":
+        out = out.transpose(1, 2)
+    if not return_lse:
+        return out
+    return out, torch.logsumexp(scores, dim=-1)
 
 
 def _error_report(actual: torch.Tensor, expected: torch.Tensor, rtol: float, atol: float) -> tuple[bool, str]:
