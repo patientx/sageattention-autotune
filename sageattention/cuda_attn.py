@@ -1,5 +1,5 @@
 import warnings
-from typing import Literal, Union, overload
+from typing import Literal, overload
 
 import torch
 
@@ -8,7 +8,7 @@ from .cuda_compile import _qattn_sm80
 from .triton.quant_per_thread import per_thread_int8
 from .utils import DEFAULT_PV_ACCUM_DTYPE, LOG2_E, _lse_correction, _pad_qkv
 
-SageAttnResult = Union[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]
+SageAttnResult = torch.Tensor | tuple[torch.Tensor, torch.Tensor]
 
 
 @overload

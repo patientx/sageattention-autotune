@@ -2,7 +2,7 @@ import os
 import shlex
 import shutil
 import subprocess
-from typing import Any
+from typing import Any, cast
 
 import torch
 from setuptools import find_packages, setup
@@ -31,7 +31,7 @@ def _enable_ccache() -> None:
     nvcc = os.path.join(CUDA_HOME, "bin", "nvcc.exe" if os.name == "nt" else "nvcc")
     os.environ["PYTORCH_NVCC"] = _prepend_ccache(os.getenv("PYTORCH_NVCC", _quote_command_arg(nvcc)), ccache_path)
 
-    original_write_ninja_file = getattr(cpp_extension, "_write_ninja_file")
+    original_write_ninja_file = cpp_extension._write_ninja_file
     if original_write_ninja_file is None:
         return
 
@@ -61,8 +61,8 @@ def _enable_ccache() -> None:
             with open(path, "w", encoding="utf-8") as f:
                 f.write(patched)
 
-    setattr(write_ninja_file_with_ccache, "_sageattention_ccache", True)
-    setattr(cpp_extension, "_write_ninja_file", write_ninja_file_with_ccache)
+    cast(Any, write_ninja_file_with_ccache)._sageattention_ccache = True
+    cast(Any, cpp_extension)._write_ninja_file = write_ninja_file_with_ccache
 
 
 def _env_flag_enabled(name: str) -> bool:
@@ -94,7 +94,7 @@ nvcc_flags = [
     "-diag-suppress=221",
     "-DTORCH_STABLE_ONLY",
     "-gencode",
-    "arch=compute_80,code=sm_80",
+    "arch=compute_86,code=sm_86",
 ]
 
 if os.name == "nt":
@@ -129,9 +129,6 @@ else:
             py_limited_api=True,
         ),
     ]
-
-max_jobs = os.getenv("EXT_PARALLEL", os.getenv("MAX_JOBS", str(os.cpu_count() or 1)))
-os.environ.setdefault("MAX_JOBS", max_jobs)
 
 setup(
     name="sageattention",

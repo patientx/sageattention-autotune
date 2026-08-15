@@ -20,6 +20,10 @@ import triton.language as tl
 
 from ..autotune_utils import _autotune_seq_len_bucket
 
+# 127.5 - 2**-12 leaves a round-to-nearest margin without changing the scale materially.
+_INT8_SCALE_INV = tl.constexpr(float.fromhex("0x1.010122p-7"))
+_INT8_SCALE_FLOOR = tl.constexpr(2.0**-126)
+
 
 @triton.jit
 def _round_to_int8(x):
@@ -36,7 +40,7 @@ def _round_to_int8(x):
 
 @triton.jit
 def _quantize_tile_to_int8(x):
-    scale = tl.max(tl.abs(x)) / 127.5 + 1e-7
+    scale = tl.max(tl.abs(x)) * _INT8_SCALE_INV + _INT8_SCALE_FLOOR
     return _round_to_int8(x / scale), scale
 
 
