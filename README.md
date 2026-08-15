@@ -2,7 +2,7 @@
 
 Port of [SageAttention](https://github.com/thu-ml/SageAttention) with autotuned block sizes and other quality-of-life improvements.
 
-In the master branch I've ported the SageAttention 2 CUDA sm80 kernels and the Triton kernels, and the autotune configs are mostly optimized for RTX 30xx. The CUDA sm89 kernels for RTX 40xx/50xx are in `sm89` branch.
+In the master branch I've ported the SageAttention 2 CUDA sm80 kernels and the Triton kernels, and the autotune configs are mostly optimized for RTX 30xx. The CUDA sm89 kernels for RTX 40xx/50xx are in `sm89` branch. Some experimental work on a bwd kernel is in `bwd` branch.
 
 This repo also serves as an example of how to do autotune when multiple kernels (like quant kernel and attn kernel) need consistent parameters (like block sizes).
 

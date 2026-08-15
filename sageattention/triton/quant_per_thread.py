@@ -18,7 +18,7 @@ import torch
 import triton
 import triton.language as tl
 
-from .quant_per_block import _quantize_tile_to_int8, _round_to_int8
+from .quant_per_block import _INT8_SCALE_FLOOR, _INT8_SCALE_INV, _quantize_tile_to_int8, _round_to_int8
 
 
 @triton.jit
@@ -107,7 +107,7 @@ def quant_key_per_thread_int8_kernel(
         x0 = tl.where(mask0, x0 - mean[None, :], 0.0)
         x1 = tl.where(mask1, x1 - mean[None, :], 0.0)
 
-    scale = tl.maximum(tl.max(tl.abs(x0)), tl.max(tl.abs(x1))) / 127.5 + 1e-7
+    scale = tl.maximum(tl.max(tl.abs(x0)), tl.max(tl.abs(x1))) * _INT8_SCALE_INV + _INT8_SCALE_FLOOR
     x0_int8 = _round_to_int8(x0 / scale)
     x1_int8 = _round_to_int8(x1 / scale)
 

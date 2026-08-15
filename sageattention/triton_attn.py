@@ -1,4 +1,4 @@
-from typing import Literal, Union, overload
+from typing import Literal, overload
 
 import torch
 
@@ -7,7 +7,7 @@ from .triton.quant_per_block import per_block_int8
 from .triton_autotune import _eager_triton_autotune_select, _sageattn_triton_autotuned
 from .utils import DEFAULT_PV_ACCUM_DTYPE, LOG2_E, _lse_correction, _pad_qkv
 
-SageAttnResult = Union[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]
+SageAttnResult = torch.Tensor | tuple[torch.Tensor, torch.Tensor]
 
 
 @overload
