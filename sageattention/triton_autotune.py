@@ -191,7 +191,10 @@ def _(
     attn_num_warps: int = 0,
     attn_num_stages: int = 0,
 ) -> torch.Tensor:
-    return torch.empty_like(q)
+    # The real kernel allocates a fresh contiguous buffer (and slices off head-dim
+    # padding), so empty_like(q) would wrongly propagate q's permuted strides.
+    head_dim = q.size(-1)
+    return q.new_empty((*q.shape[:-1], _padded_head_dim(head_dim)))[..., :head_dim]
 
 
 register_custom_op_autotuning(
